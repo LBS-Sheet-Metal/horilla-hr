@@ -134,6 +134,12 @@ rapidfuzz>=3.14.6,<4
 # 3.8.x and spacy refuses a model from another minor. Raising this cap
 # means raising the model URL to match, in the same commit.
 spacy>=3.8.16,<3.9
+# preshed 3.0.14 (released 2026-10-24) breaks spacy 3.8.16: loading any model raises
+# "OverflowError: Python int too large to convert to C ssize_t" from the tokenizer, so
+# recruitment.views fails at import and the app does not start
+# (https://github.com/explosion/spaCy/issues/14058). Lift the pin once spacy or preshed
+# ships a fix.
+preshed==3.0.13
 # Not on PyPI -- spacy models are published only as GitHub release assets.
 # Named (PEP 508) form rather than a bare URL so pip knows which package
 # this provides before fetching it. The wheel is py3-none-any, so it is
