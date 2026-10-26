@@ -7,7 +7,6 @@ from datetime import date
 from typing import Any
 
 from django.contrib import messages
-from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import resolve, reverse, reverse_lazy
@@ -666,22 +665,9 @@ class LeaveClashListView(LeaveRequestsListView):
         record = LeaveRequest.objects.filter(id=pk).first()
         if not record:
             return queryset.none()
-        if record.status != "rejected" or record.status != "cancelled":
-            queryset = (
-                queryset.filter(
-                    Q(
-                        employee_id__employee_work_info__department_id=record.employee_id.employee_work_info.department_id
-                    )
-                    | Q(
-                        employee_id__employee_work_info__job_position_id=record.employee_id.employee_work_info.job_position_id
-                    ),
-                    employee_id__employee_work_info__company_id=record.employee_id.employee_work_info.company_id,
-                    start_date__lte=record.end_date,
-                    end_date__gte=record.start_date,
-                )
-                .exclude(id=pk)
-                .exclude(Q(status="cancelled") | Q(status="rejected"))
-            )
+        queryset = queryset.filter(
+            id__in=record.clashing_requests().values_list("id", flat=True)
+        )
 
         return queryset.distinct()
 

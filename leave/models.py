@@ -2117,6 +2117,39 @@ class LeaveRequest(HorillaModel):
             return overlapping_requests.count()
         return 0
 
+    def clashing_requests(self):
+        """
+        Active requests from the same company and the same department or job
+        position whose dates overlap this request.
+        """
+        work_info = EmployeeWorkInformation.objects.filter(
+            employee_id=self.employee_id
+        ).first()
+        if not work_info or self.status in ["cancelled", "rejected"]:
+            return LeaveRequest.objects.none()
+        return (
+            LeaveRequest.objects.exclude(id=self.id)
+            .filter(
+                Q(
+                    employee_id__employee_work_info__department_id=work_info.department_id
+                )
+                | Q(
+                    employee_id__employee_work_info__job_position_id=work_info.job_position_id
+                ),
+                employee_id__employee_work_info__company_id=work_info.company_id,
+                start_date__lte=self.end_date,
+                end_date__gte=self.start_date,
+            )
+            .exclude(Q(status="cancelled") | Q(status="rejected"))
+            .distinct()
+        )
+
+    def get_leave_clash_count(self):
+        """
+        Live number of active requests clashing with this one.
+        """
+        return self.clashing_requests().count()
+
 
 class LeaverequestFile(models.Model):
     file = models.FileField(upload_to=upload_path)
