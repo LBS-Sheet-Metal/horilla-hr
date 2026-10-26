@@ -4269,7 +4269,8 @@ DAYS = [
 
 class PayslipAutoGenerate(models.Model):
     """
-    Model for generating payslip automatically
+    Deprecated: payslip automation now lives on PayPeriodSettings.auto_generate.
+    Kept so existing rows survive; nothing reads it any more.
     """
 
     generate_day = models.CharField(
@@ -4348,11 +4349,6 @@ class PayslipAutoGenerate(models.Model):
                 )
 
     def save(self, *args, **kwargs):
-        from payroll.scheduler import auto_payslip_generate
-
-        if self.auto_generate:
-            auto_payslip_generate()
-
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
