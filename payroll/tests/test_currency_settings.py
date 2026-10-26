@@ -142,9 +142,12 @@ class RememberedPerRequestTests(TestCase):
         return request
 
     def test_looked_up_once(self):
-        PayrollSettings.for_selected_company()
+        # The first call also warms Django's ContentType cache, which the
+        # filter's get_horilla_model_class() hits once per process.
+        self.assertEqual(currency_symbol_position("100"), "£ 100")
         with self.assertNumQueries(0):
             self.assertEqual(currency_symbol_position("100"), "£ 100")
+            self.assertEqual(PayrollSettings.currency_for_selected_company(), "£")
 
     def test_per_company(self):
         PayrollSettings.for_selected_company()
