@@ -890,3 +890,78 @@ class ChipHoverGroupTests(HalfDayLeaveNaturalTests):
             cell_halves_data("half_absent", None), "absent|#fca5a5,present|#86efac"
         )
         self.assertEqual(cell_halves_data("present", None), "")
+
+
+class UpcomingHalfLeaveTests(HalfDayLeaveNaturalTests):
+    """A half-day leave still ahead counts its leave half; the rest is upcoming."""
+
+    def setUp(self):
+        super().setUp()
+        day = datetime.date.today() + datetime.timedelta(days=3)
+        while day.weekday() != 2:
+            day += datetime.timedelta(days=1)
+        self.day = day
+
+    def _future_leave(self):
+        from leave.models import LeaveRequest, LeaveType
+
+        leave_type = LeaveType.objects.create(name="Future Half", payment="paid")
+        LeaveRequest.objects.bulk_create(
+            [
+                LeaveRequest(
+                    employee_id=self.employee,
+                    leave_type_id=leave_type,
+                    start_date=self.day,
+                    end_date=self.day,
+                    start_date_breakdown="second_half",
+                    end_date_breakdown="second_half",
+                    requested_days=0.5,
+                    description="Test",
+                    status="approved",
+                )
+            ]
+        )
+
+    def _strip(self, end=None):
+        from attendance.views.summary import _build_calendar_context
+
+        return _build_calendar_context(self.employee, self.day, end or self.day)[
+            "cal_summary"
+        ]
+
+    def test_the_leave_half_counts_as_leave_and_the_rest_as_upcoming(self):
+        self._future_leave()
+        strip = self._strip()
+        self.assertEqual(
+            (strip["paid_leave"], strip["upcoming"], strip["absent"]), (0.5, 0.5, 0)
+        )
+
+    def test_a_future_day_with_nothing_on_it_is_upcoming(self):
+        strip = self._strip()
+        self.assertEqual((strip["upcoming"], strip["absent"]), (1, 0))
+
+    def test_the_upcoming_tile_shows_only_when_there_is_something_upcoming(self):
+        from django.template.loader import render_to_string
+
+        from attendance.views.summary import _build_calendar_context
+
+        self._future_leave()
+        html = render_to_string(
+            "attendance/monthly_summary/calendar_modal.html",
+            _build_calendar_context(self.employee, self.day, self.day),
+        )
+        self.assertIn(">Upcoming<", html)
+
+    def test_the_day_is_drawn_as_two_halves_leave_and_upcoming(self):
+        from attendance.views.summary import _build_calendar_context
+
+        self._future_leave()
+        context = _build_calendar_context(self.employee, self.day, self.day)
+        cell = [
+            c
+            for m in context["months"]
+            for w in m["weeks"]
+            for c in w
+            if c and c["date"] == self.day
+        ][0]
+        self.assertEqual(cell["split_style"], "--h1:#e2e8f0;--h2:#93c5fd")

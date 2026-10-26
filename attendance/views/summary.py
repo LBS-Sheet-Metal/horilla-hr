@@ -306,6 +306,16 @@ def cell_groups(status, halves, conflict_with):
     return " ".join(sorted(groups))
 
 
+def _future_half_style(part):
+    """Colours for a day ahead with half-day leave: the leave half, and the half still to come."""
+    if not part:
+        return ""
+    leave = "#93c5fd" if part[0] >= part[1] else "#fdba74"
+    upcoming = "#e2e8f0"
+    first, second = (leave, upcoming) if part[2] == "first" else (upcoming, leave)
+    return f"--h1:{first};--h2:{second}"
+
+
 def cell_halves_data(status, halves):
     """ "group|colour,group|colour" for a day drawn in two halves, in drawing order, else "".
 
@@ -2040,6 +2050,8 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                 unpaid_map[d] = name
     # The halves of a day that is part leave, filled in by day_info below.
     part_day_halves = {}
+    # Future days with half-day leave: only the leave half is counted; the other half is upcoming.
+    future_part = {}
 
     # -- Holiday dates --------------------------------------------------------
     holiday_map = {}
@@ -2265,6 +2277,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
         if _pl and d not in holiday_map and d not in week_off_dates:
             if d > datetime.date.today():
                 # Nothing to judge the other half by yet: show the leave, not an absence.
+                future_part[d] = _pl
                 return (
                     ("paid_leave" if _pl[0] else "unpaid_leave"),
                     _pl[3],
@@ -2387,6 +2400,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                                 "conflict_with": conflict_with,
                                 "resolution": resolution_badge,
                                 "is_conflict": is_conflict,
+                                "future_part": future_part.get(d),
                                 "hours_second": _cell_sec,
                                 "hours_label": _hlabel,
                                 "show_hours": _show_hours,
@@ -2395,7 +2409,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                                 "split_style": (
                                     f"--h1:{SPLIT_HALVES[_halves[0]][2]};--h2:{SPLIT_HALVES[_halves[1]][2]}"
                                     if status == "split" and _halves
-                                    else ""
+                                    else _future_half_style(future_part.get(d))
                                 ),
                                 "halves": _halves or (),
                                 "groups": cell_groups(status, _halves, conflict_with),
@@ -2426,6 +2440,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
         "unpaid_leave": 0,
         "week_off": 0,
         "holiday": 0,
+        "upcoming": 0,
         "conflict": 0,
         "worked_label": _secs_to_label(cal_worked_seconds),
         "regular_label": _secs_to_label(cal_regular_seconds),
@@ -2446,6 +2461,19 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                 if _c is None or _c["status"] == "out_of_range":
                     continue
                 _s = _c["status"]
+                _fp = _c.get("future_part")
+                if _fp:
+                    # A day ahead with half-day leave: the leave half counts as leave, the
+                    # rest is upcoming until the day has happened.
+                    cal_summary["paid_leave"] += _fp[0]
+                    cal_summary["unpaid_leave"] += _fp[1]
+                    cal_summary["upcoming"] += 1.0 - _fp[0] - _fp[1]
+                    if _c.get("conflict_with") in ("paid_leave", "unpaid_leave"):
+                        cal_summary["conflict"] += 1
+                    continue
+                if _s == "future":
+                    cal_summary["upcoming"] += 1
+                    continue
                 if _s == "present":
                     cal_summary["full_present"] += 1
                 elif _s == "half_present":
@@ -2476,7 +2504,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                         else:
                             cal_summary[_bucket] += 0.5
     # Whole numbers stay whole; half days show as .5.
-    for _k in ("present", "absent", "paid_leave", "unpaid_leave"):
+    for _k in ("present", "absent", "paid_leave", "unpaid_leave", "upcoming"):
         if not cal_summary[_k] % 1:
             cal_summary[_k] = int(cal_summary[_k])
 
