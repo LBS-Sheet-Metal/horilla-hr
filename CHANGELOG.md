@@ -32,6 +32,26 @@ date and open a fresh Unreleased above it.
 ### Security      — vulnerabilities fixed; link the advisory and credit the reporter
 -->
 
+### Added
+
+- Base: the scheduler's job history is trimmed daily at 03:15 in the configured time
+  zone, keeping `HORILLA_SCHEDULER_HISTORY_DAYS` days (7 by default). Nothing removed the
+  run history before, so the table grew without limit. Restart the scheduler to register
+  the job.
+
+### Fixed
+
+- Payroll: the currency symbol and its position come from the selected company's payroll
+  settings in the payroll dashboard, report exports, payslips and emailed payslips,
+  instead of a leftover "$" row.
+- Payroll: deductions that reduce basic pay, gross pay or net pay are now also worked out
+  in Sequence order. For example a 10% deduction at sequence 20 and a fixed 500 at
+  sequence 10 on a gross of 27,000 now give 23,850 rather than 23,800. Payslips that are
+  already generated do not change.
+- Observability: `/metrics/` now reports `horilla_scheduler_jobs_overdue` and
+  `horilla_scheduler_executions_total` (a gauge over the retained history), and no longer
+  prints `horilla_scheduler_jobs_registered` twice.
+
 ## [2.2.1] — 2026-10-DD
 
 Patch release. It brings in the dependency security updates that landed after 2.2.0,
