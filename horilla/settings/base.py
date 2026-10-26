@@ -459,6 +459,9 @@ TWO_FACTORS_AUTHENTICATION = False
 # When True, /ready/ returns 503 until run_scheduler has registered jobs.
 # Off by default so Docker CI (web without the scheduler service) still passes.
 HORILLA_REQUIRE_SCHEDULER = env.bool("HORILLA_REQUIRE_SCHEDULER", default=False)
+# Days of scheduler job-run history (django_apscheduler's DjangoJobExecution)
+# kept by the daily trim_scheduler_history job; older rows are deleted.
+HORILLA_SCHEDULER_HISTORY_DAYS = env.int("HORILLA_SCHEDULER_HISTORY_DAYS", default=7)
 
 SIDEBARS = [
     "employee",
