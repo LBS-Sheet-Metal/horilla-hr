@@ -8,13 +8,14 @@ import calendar
 import json
 from datetime import date, timedelta
 
-from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
+
+from horilla.decorators import login_required
 
 
 def _safe_url(url_name, query=""):

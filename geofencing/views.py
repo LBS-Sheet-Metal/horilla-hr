@@ -1,5 +1,5 @@
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.decorators import permission_required
 from django.http import QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from base.models import Company
 from geofencing.forms import GeoFencingSetupForm
+from horilla.decorators import login_required
 
 from .models import GeoFencing
 from .serializers import *

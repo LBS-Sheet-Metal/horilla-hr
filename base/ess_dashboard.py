@@ -8,13 +8,13 @@ All data is scoped to request.user.employee_get; no cross-employee access.
 import calendar
 from datetime import date, timedelta
 
-from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils.translation import gettext as _
 
 from base.templatetags.horillafilters import is_check_in_enabled
+from horilla.decorators import login_required
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

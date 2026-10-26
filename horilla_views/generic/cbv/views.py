@@ -62,6 +62,7 @@ from horilla_views.cbv_methods import (  # update_initial_cache,
     sortby,
     split_by_import_reference,
     structured,
+    unauthenticated_response,
     update_saved_filter_cache,
 )
 from horilla_views.forms import DynamicBulkUpdateForm, ToggleColumnForm
@@ -2747,7 +2748,7 @@ class HorillaProfileView(DetailView):
 def dispatch_profile_tab(request, tab_key: str, pk: int, *args, **kwargs):
     """Resolve any HorillaProfileView tab through one static route, looking the view up in _tab_view_registry (avoids racy per-tab URL registration across worker processes)."""
     if not request.user.is_authenticated:
-        return redirect(f"{reverse('login')}?next={request.path}")
+        return unauthenticated_response(request)
     view_func = HorillaProfileView._tab_view_registry.get(tab_key)
     if view_func is None:
         raise Http404(f"No profile tab registered for '{tab_key}'")
