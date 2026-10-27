@@ -198,6 +198,7 @@ MIDDLEWARE = [
     "horilla.observability.RequestIDMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -316,11 +317,6 @@ X_FRAME_OPTIONS = "SAMEORIGIN"
 # ========================================
 # TEMPLATES
 # ========================================
-# In production (DEBUG=False) these are wrapped in the cached template
-# loader so Django compiles each template once per process instead of
-# re-parsing it (and re-running horilla_dbtemplate's DB-lookup chain) on
-# every include, on every request. Left uncached in DEBUG so template
-# edits during development are picked up without restarting the server.
 _TEMPLATE_LOADERS = [
     "horilla_dbtemplate.loaders.Loader",
     ("django.template.loaders.filesystem.Loader", [BASE_DIR / THEME_APP / "templates"]),
@@ -360,11 +356,7 @@ TEMPLATES = [
                 "horilla_tour.context_processors.pending_tours_flag",
                 "horilla_crumbs.context_processors.breadcrumbs",
             ],
-            "loaders": (
-                _TEMPLATE_LOADERS
-                if DEBUG
-                else [("django.template.loaders.cached.Loader", _TEMPLATE_LOADERS)]
-            ),
+            "loaders": [("django.template.loaders.cached.Loader", _TEMPLATE_LOADERS)],
         },
     },
 ]
