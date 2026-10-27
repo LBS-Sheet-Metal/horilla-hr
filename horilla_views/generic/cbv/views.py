@@ -420,7 +420,7 @@ class HorillaListView(ListView):
 
         hidden_fields = []
         existing_instance = None
-        if self.request:
+        if self.request and self.show_toggle_form:
             existing_instance = models.ToggleColumn.objects.filter(
                 user_id=self.request.user, path=self.request.path_info
             ).first()
