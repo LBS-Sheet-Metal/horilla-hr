@@ -1448,12 +1448,44 @@ class LeaveRequest(HorillaModel):
             context={"instance": self},
         )
 
+    def available_balance_col(self):
+        """
+        Available balance for the employee/leave type. Uses the value annotated
+        by the list view; falls back to a single lookup elsewhere.
+        """
+        balance = getattr(self, "available_balance", None)
+        if balance is None:
+            balance = (
+                AvailableLeave.objects.filter(
+                    employee_id=self.employee_id_id, leave_type_id=self.leave_type_id_id
+                )
+                .values_list("total_leave_days", flat=True)
+                .first()
+            )
+        return "-" if balance is None else f"{round(balance, 2):g}"
+
     def penalty_col(self):
         """
         method for penalty coloumn
         """
         return render_template(
             path="cbv/leave_requests/penalty.html",
+            context={"instance": self},
+        )
+
+    def get_penalty_tab_url(self):
+
+        return (
+            reverse("policies-discipline-view")
+            + f"?tab=penalty&leave_request_id={self.id}"
+        )
+
+    def penalty_detail_col(self):
+        """
+        penalty count with label for the detail view
+        """
+        return render_template(
+            path="cbv/leave_requests/penalty_detail.html",
             context={"instance": self},
         )
 
@@ -1605,9 +1637,13 @@ class LeaveRequest(HorillaModel):
 
     def get_penalties_count(self):
         """
-        This method is used to return the total penalties in the late early instance
+        Total penalties on this leave request. Uses the value annotated by the
+        list view; falls back to a single count elsewhere.
         """
-        return self.penaltyaccounts_set.count()
+        count = getattr(self, "penalties_count", None)
+        if count is None:
+            count = self.penaltyaccounts_set.count()
+        return count
 
     def requested_dates(self):
         """
@@ -1934,7 +1970,8 @@ class LeaveRequest(HorillaModel):
             # Check if requested days intersect with restricted days
             if requ_days & restri_days:
                 if (
-                    restrict.department == emp_dep
+                    emp_dep
+                    and restrict.department.filter(pk=emp_dep.pk).exists()
                     and not restrict.job_position.exists()
                 ) or (emp_job and emp_job in restrict.job_position.all()):
                     raise ValidationError(
@@ -2091,7 +2128,7 @@ class LeaveRequest(HorillaModel):
         Method to count leave clashes where this employee's leave request overlaps
         with other employees' requested dates.
         """
-        if self.status in ["cancelled", "rejected"]:
+        if self.status in ["cancelled", "rejected"] or not self.employee_id.is_active:
             return 0
         work_info = EmployeeWorkInformation.objects.filter(employee_id=self.employee_id)
         if work_info.exists() and self.status not in ["cancelled", "rejected"]:
@@ -2108,6 +2145,7 @@ class LeaveRequest(HorillaModel):
                     ),
                     # same scope as the clash list (LeaveClashListView)
                     employee_id__employee_work_info__company_id=work_info.first().company_id,
+                    employee_id__is_active=True,
                     start_date__lte=self.end_date,
                     end_date__gte=self.start_date,
                 )
@@ -2122,21 +2160,24 @@ class LeaveRequest(HorillaModel):
         Active requests from the same company and the same department or job
         position whose dates overlap this request.
         """
-        work_info = EmployeeWorkInformation.objects.filter(
-            employee_id=self.employee_id
-        ).first()
-        if not work_info or self.status in ["cancelled", "rejected"]:
+        work_info = getattr(self.employee_id, "employee_work_info", None)
+        if (
+            not work_info
+            or self.status in ["cancelled", "rejected"]
+            or not self.employee_id.is_active
+        ):
             return LeaveRequest.objects.none()
         return (
             LeaveRequest.objects.exclude(id=self.id)
             .filter(
                 Q(
-                    employee_id__employee_work_info__department_id=work_info.department_id
+                    employee_id__employee_work_info__department_id=work_info.department_id_id
                 )
                 | Q(
-                    employee_id__employee_work_info__job_position_id=work_info.job_position_id
+                    employee_id__employee_work_info__job_position_id=work_info.job_position_id_id
                 ),
-                employee_id__employee_work_info__company_id=work_info.company_id,
+                employee_id__employee_work_info__company_id=work_info.company_id_id,
+                employee_id__is_active=True,
                 start_date__lte=self.end_date,
                 end_date__gte=self.start_date,
             )
@@ -2389,8 +2430,8 @@ class RestrictLeave(HorillaModel):
     title = models.CharField(max_length=200, verbose_name=_("Title"))
     start_date = models.DateField(verbose_name=_("Start Date"))
     end_date = models.DateField(verbose_name=_("End Date"))
-    department = models.ForeignKey(
-        Department, verbose_name=_("Department"), on_delete=models.CASCADE
+    department = models.ManyToManyField(
+        Department, verbose_name=_("Department"), related_name="restrict_leaves"
     )
     job_position = models.ManyToManyField(
         JobPosition,
@@ -2432,6 +2473,13 @@ class RestrictLeave(HorillaModel):
 
     def __str__(self) -> str:
         return f"{self.title}"
+
+    def department_col(self):
+        """
+        For department column
+        """
+
+        return ", ".join(str(dep) for dep in self.department.all()) or "-"
 
     def job_position_col(self):
         """
