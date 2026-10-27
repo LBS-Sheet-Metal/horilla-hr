@@ -1182,7 +1182,9 @@ class PenaltyAccountFilter(HorillaFilterSet):
 
     class Meta:
         model = PenaltyAccounts
-        fields = ["leave_type_id"] if apps.is_installed("leave") else []
+        fields = (
+            ["leave_type_id", "leave_request_id"] if apps.is_installed("leave") else []
+        )
 
     def search_method(self, queryset, name, value):
         """
