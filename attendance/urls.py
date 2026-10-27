@@ -549,6 +549,11 @@ urlpatterns = [
         name="update-fields-based-shift",
     ),
     path(
+        "get-shift-based-fields/",
+        views.get_shift_based_fields,
+        name="get-shift-based-fields",
+    ),
+    path(
         "update-worked-hour-field/",
         views.update_worked_hour_field,
         name="update-worked-hour-field",
