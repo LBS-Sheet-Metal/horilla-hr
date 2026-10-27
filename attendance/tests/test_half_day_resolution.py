@@ -294,16 +294,23 @@ class HalfDayLeaveNaturalTests(TestCase):
             ]
         )[0]
 
-    def _attend(self, worked="08:00"):
+    def _attend(self, worked="04:00"):
         from attendance.models import Attendance
+        from leave.models import LeaveRequest
 
+        # Punch in the half that is not on leave, so it is not a clash.
+        leave = LeaveRequest.objects.filter(employee_id=self.employee).first()
+        if leave and leave.start_date_breakdown == "first_half":
+            clock_in, clock_out = datetime.time(13, 0), datetime.time(18, 0)
+        else:
+            clock_in, clock_out = datetime.time(9, 0), datetime.time(13, 0)
         return Attendance.objects.create(
             employee_id=self.employee,
             attendance_date=WEDNESDAY,
             attendance_clock_in_date=WEDNESDAY,
-            attendance_clock_in=datetime.time(9, 0),
+            attendance_clock_in=clock_in,
             attendance_clock_out_date=WEDNESDAY,
-            attendance_clock_out=datetime.time(18, 0),
+            attendance_clock_out=clock_out,
             attendance_worked_hour=worked,
             minimum_hour="08:00",
             attendance_validated=True,
@@ -346,7 +353,7 @@ class HalfDayLeaveNaturalTests(TestCase):
         self,
     ):
         self._leave()
-        self._attend("08:00")
+        self._attend("04:00")  # the other half, worked: a full 8h would clash
         row = self._row()
         self.assertEqual(
             (row["paid_leave"], row["present"], row["absent"]), (0.5, 0.5, 0)
@@ -401,7 +408,7 @@ class HalfDayLeaveNaturalTests(TestCase):
 
     def test_calendar_shows_present_half_when_attendance_is_found(self):
         self._leave(breakdown="first_half")
-        self._attend("08:00")
+        self._attend("04:00")  # the other half, worked: a full 8h would clash
         cell = self._cell()
         self.assertEqual(cell["status"], "split")
         self.assertEqual(cell["split_style"], "--h1:#93c5fd;--h2:#86efac")
@@ -964,4 +971,56 @@ class UpcomingHalfLeaveTests(HalfDayLeaveNaturalTests):
             for c in w
             if c and c["date"] == self.day
         ][0]
-        self.assertEqual(cell["split_style"], "--h1:#e2e8f0;--h2:#93c5fd")
+        self.assertEqual(
+            cell["split_style"], "--h1:var(--cal-upcoming,#f1f5f9);--h2:#93c5fd"
+        )
+
+
+class HalfLeaveClashTests(HalfDayLeaveNaturalTests):
+    """Attendance inside the half of a day that is on leave is a conflict."""
+
+    def _punch(self, clock_in, clock_out):
+        from attendance.models import Attendance
+
+        return Attendance.objects.create(
+            employee_id=self.employee,
+            attendance_date=WEDNESDAY,
+            attendance_clock_in_date=WEDNESDAY,
+            attendance_clock_in=clock_in,
+            attendance_clock_out_date=WEDNESDAY,
+            attendance_clock_out=clock_out,
+            attendance_worked_hour="04:00",
+            minimum_hour="08:00",
+            attendance_validated=True,
+        )
+
+    def _calendar_cell(self):
+        return self._cell()
+
+    def test_attendance_in_the_leave_half_is_a_conflict(self):
+        self._leave(breakdown="second_half")
+        self._punch(datetime.time(14, 0), datetime.time(18, 0))
+        cell = self._cell()
+        self.assertTrue(cell["is_conflict"])
+        self.assertEqual(cell["conflict_with"], "paid_leave")
+        self.assertEqual(self._row()["conflict_days"], 1)
+
+    def test_attendance_in_the_other_half_is_not(self):
+        self._leave(breakdown="second_half")
+        self._punch(datetime.time(9, 0), datetime.time(12, 30))
+        cell = self._cell()
+        self.assertFalse(cell["is_conflict"])
+        self.assertEqual(self._row()["conflict_days"], 0)
+
+    def test_first_half_leave_with_a_morning_punch_is_a_conflict(self):
+        self._leave(breakdown="first_half")
+        self._punch(datetime.time(9, 0), datetime.time(12, 0))
+        self.assertTrue(self._cell()["is_conflict"])
+
+    def test_a_resolved_clash_is_no_longer_a_conflict(self):
+        self._leave(breakdown="second_half")
+        self._punch(datetime.time(14, 0), datetime.time(18, 0))
+        AttendanceConflictResolution.objects.create(
+            employee_id=self.employee, date=WEDNESDAY, resolution="attendance"
+        )
+        self.assertFalse(self._cell()["is_conflict"])

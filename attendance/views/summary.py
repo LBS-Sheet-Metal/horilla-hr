@@ -168,6 +168,111 @@ def partial_leave_days(leaves, from_date, to_date):
     return partial, paid_full, unpaid_full
 
 
+# How far into the half that is on leave a punch may reach before it counts as a clash: coming
+# in early on a first-half leave, or leaving late on a second-half one. One place to change it.
+HALF_LEAVE_GRACE_SECS = 30 * 60
+
+
+def shift_hours_text(shift_times=None):
+    """ "09:00 - 18:00, halves split at 13:30": the shift's hours and where the day is cut in two."""
+    import datetime as _dt
+
+    start, end = shift_times or (None, None)
+    if start and end and start < end:
+        base = _dt.date(2000, 1, 1)
+        mid = (
+            _dt.datetime.combine(base, start)
+            + (_dt.datetime.combine(base, end) - _dt.datetime.combine(base, start)) / 2
+        ).time()
+        return _("%(start)s \u2013 %(end)s, halves split at %(mid)s") % {
+            "start": f"{start:%H:%M}",
+            "end": f"{end:%H:%M}",
+            "mid": f"{mid:%H:%M}",
+        }
+    return _("No shift times set, halves split at 13:00")
+
+
+def half_leave_label(lead, shift_times=None):
+    """ "Second-half leave (13:30 - 18:00)": which half is on leave and when it runs."""
+    import datetime as _dt
+
+    name = _("First-half leave") if lead == "first" else _("Second-half leave")
+    start, end = shift_times or (None, None)
+    if start and end and start < end:
+        base = _dt.date(2000, 1, 1)
+        mid = (
+            _dt.datetime.combine(base, start)
+            + (_dt.datetime.combine(base, end) - _dt.datetime.combine(base, start)) / 2
+        ).time()
+        window = (
+            f"{start:%H:%M} \u2013 {mid:%H:%M}"
+            if lead == "first"
+            else f"{mid:%H:%M} \u2013 {end:%H:%M}"
+        )
+    else:
+        window = _("before 13:00") if lead == "first" else _("after 13:00")
+    return f"{name} ({window})"
+
+
+def half_leave_conflict(
+    lead,
+    clock_in,
+    clock_out,
+    shift_times=None,
+    worked=0,
+    min_secs=0,
+    grace=HALF_LEAVE_GRACE_SECS,
+):
+    """
+    What makes attendance clash with a half-day leave, in a sentence, or "" when it does not.
+
+    Two things clash: working the shift's full minimum hours (a half-day leave leaves only the
+    other half to work), and a punch reaching into the half on leave beyond ``grace``. The halves
+    split at the middle of the shift (13:00 when the shift has no times); a punch with no
+    clock-out yet counts at its clock-in. Night shifts are judged on hours alone.
+    """
+    import datetime as _dt
+
+    if not clock_in:
+        return ""
+    if min_secs > 0 and worked >= min_secs:
+        return _(
+            "Worked the full %(hours)s, but with half the day on leave only half was needed."
+        ) % {"hours": f"{min_secs // 3600}h {(min_secs % 3600) // 60:02d}m"}
+
+    start, end = shift_times or (None, None)
+    if start and end and end <= start:
+        return ""
+    base = _dt.date(2000, 1, 1)
+    at = lambda t: _dt.datetime.combine(base, t)
+    if start and end:
+        mid = at(start) + (at(end) - at(start)) / 2
+    else:
+        mid = at(_dt.time(13, 0))
+    slack = _dt.timedelta(seconds=grace)
+    minutes = grace // 60
+    first_in = at(clock_in)
+    last_out = at(clock_out or clock_in)
+    if last_out < first_in:
+        last_out += _dt.timedelta(days=1)
+    if lead == "first" and first_in < mid - slack:
+        return _(
+            "Clocked in at %(at)s, but the leave half runs until %(mid)s (up to %(min)s min early is allowed)."
+        ) % {"at": f"{clock_in:%H:%M}", "mid": f"{mid:%H:%M}", "min": minutes}
+    if lead != "first" and last_out > mid + slack:
+        return _(
+            "Worked until %(at)s, but the leave half starts at %(mid)s (up to %(min)s min late is allowed)."
+        ) % {"at": f"{last_out:%H:%M}", "mid": f"{mid:%H:%M}", "min": minutes}
+    return ""
+
+
+def leave_half_clash(lead, clock_in, clock_out, shift_times=None, worked=0, min_secs=0):
+    """True when ``half_leave_conflict`` finds a clash."""
+    return bool(
+        half_leave_conflict(lead, clock_in, clock_out, shift_times, worked, min_secs)
+    )
+
+
 def natural_halves(partial, got_attendance):
     """The two halves of a day with half-day leave: ("PL", "A"), ("P", "UL"), ("PL", "UL") ...
 
@@ -311,7 +416,8 @@ def _future_half_style(part):
     if not part:
         return ""
     leave = "#93c5fd" if part[0] >= part[1] else "#fdba74"
-    upcoming = "#e2e8f0"
+    # The same colour as an upcoming day (.cal-future), dark theme included.
+    upcoming = "var(--cal-upcoming,#f1f5f9)"
     first, second = (leave, upcoming) if part[2] == "first" else (upcoming, leave)
     return f"--h1:{first};--h2:{second}"
 
@@ -566,7 +672,14 @@ def build_monthly_summary(from_date, to_date, employee_qs):
         "overtime_second",
         "minimum_hour",
         "attendance_date",
+        "attendance_clock_in",
+        "attendance_clock_out",
+        "shift_id_id",
     )
+    att_clock_map = defaultdict(
+        dict
+    )  # {emp_pk: {date: (clock_in, clock_out, worked, min, shift)}}
+    att_shift_ids = set()
 
     att_dates_map = defaultdict(set)  # {emp_pk: set(dates)} — conflict detection
     att_date_value_map = defaultdict(dict)  # {emp_pk: {date: 0.5|1.0}} — per-date value
@@ -594,6 +707,15 @@ def build_monthly_summary(from_date, to_date, employee_qs):
         else:
             _val = 1.0
         att_dates_map[_pk].add(_date)
+        att_clock_map[_pk][_date] = (
+            _r["attendance_clock_in"],
+            _r["attendance_clock_out"],
+            _worked,
+            _min_secs,
+            _r["shift_id_id"],
+        )
+        if _r["shift_id_id"]:
+            att_shift_ids.add(_r["shift_id_id"])
         att_date_value_map[_pk][_date] = _val
         att_date_secs_map[_pk][_date] = _worked
         att_date_ot_secs_map[_pk][_date] = _r["overtime_second"] or 0
@@ -618,16 +740,24 @@ def build_monthly_summary(from_date, to_date, employee_qs):
     ):
         emp_shift_map[_wi["employee_id_id"]] = _wi["shift_id_id"]
 
-    shift_pk_set = {v for v in emp_shift_map.values() if v}
+    shift_pk_set = {v for v in emp_shift_map.values() if v} | att_shift_ids
     shift_day_secs = defaultdict(dict)  # {shift_pk: {day_name: seconds}}
+    shift_day_times = defaultdict(dict)  # {shift_pk: {day_name: (start, end)}}
     if shift_pk_set:
         for _ss in (
             EmployeeShiftSchedule.objects.filter(shift_id__in=shift_pk_set)
             .select_related("day")
-            .values("shift_id_id", "day__day", "minimum_working_hour")
+            .values(
+                "shift_id_id",
+                "day__day",
+                "minimum_working_hour",
+                "start_time",
+                "end_time",
+            )
         ):
             _spk = _ss["shift_id_id"]
             _day = _ss["day__day"]
+            shift_day_times[_spk][_day] = (_ss["start_time"], _ss["end_time"])
             _secs = (
                 _strtime_secs(_ss["minimum_working_hour"])
                 if _ss["minimum_working_hour"]
@@ -926,6 +1056,25 @@ def build_monthly_summary(from_date, to_date, employee_qs):
         att_dates = att_dates_map.get(emp.pk, set())
         emp_leave_dates = leave_dates_per_emp.get(emp.pk, set())
         conflict_date_set = att_dates & emp_leave_dates
+        # Attendance inside the half of a day that is on leave is a clash too.
+        for _d, _p in _part_leave.items():
+            if (
+                _p[0] + _p[1] < 1
+                and _d in att_dates
+                and _d not in off_set
+                and _d not in holiday_dates_set
+                and _d not in _emp_off
+                and leave_half_clash(
+                    _p[2],
+                    *att_clock_map[emp.pk][_d][:2],
+                    # The shift the day was worked on; the employee's own when it was not recorded.
+                    shift_day_times.get(
+                        att_clock_map[emp.pk][_d][4] or emp_shift_map.get(emp.pk), {}
+                    ).get(_DAY_NAMES[_d.weekday()]),
+                    *att_clock_map[emp.pk][_d][2:4],
+                )
+            ):
+                conflict_date_set.add(_d)
         conflict_days = len(conflict_date_set)
 
         emp_resolved_dates = resolutions_by_emp.get(emp.pk, set())
@@ -1787,6 +1936,7 @@ def attendance_monthly_summary_detail(request):
     elif metric == "conflict":
         from attendance.methods.utils import strtime_seconds as _ss
         from attendance.models import GraceTime as _GT
+        from employee.models import EmployeeWorkInformation as _EWI_d
         from leave.models import LeaveRequest as _LR
 
         _grace = 0
@@ -1806,6 +1956,7 @@ def attendance_monthly_summary_detail(request):
                 "minimum_hour",
                 "attendance_clock_in",
                 "attendance_clock_out",
+                "shift_id_id",
             )
         )
         att_by_date = {r["attendance_date"]: r for r in att_rows}
@@ -1838,6 +1989,55 @@ def attendance_monthly_summary_detail(request):
                         _lr.leave_type_id.name,
                         _lr.leave_type_id.payment,
                     )
+
+        # A half-day leave is a clash only when the attendance is inside the leave half.
+        half_leave_info = {}
+        _partial, _pf, _uf = partial_leave_days(_clash_leaves, from_date, to_date)
+        _wi = _EWI_d.objects.filter(employee_id=emp).values("shift_id_id").first()
+        _own_shift = _wi["shift_id_id"] if _wi else None
+        from base.models import EmployeeShiftSchedule as _ESS_d
+
+        _shift_ids = {r["shift_id_id"] for r in att_rows if r["shift_id_id"]} | {
+            _own_shift
+        }
+        _shift_times = {}  # {(shift, day): (start, end)}
+        for x in _ESS_d.objects.filter(
+            shift_id__in=[i for i in _shift_ids if i]
+        ).values("shift_id_id", "day__day", "start_time", "end_time"):
+            _shift_times[(x["shift_id_id"], x["day__day"])] = (
+                x["start_time"],
+                x["end_time"],
+            )
+        _names = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]
+        for _d, _p in _partial.items():
+            _r = att_by_date.get(_d)
+            if _p[0] + _p[1] >= 1 or not _r:
+                continue
+            _t = _shift_times.get(
+                (_r["shift_id_id"] or _own_shift, _names[_d.weekday()])
+            )
+            _why = half_leave_conflict(
+                _p[2],
+                _r["attendance_clock_in"],
+                _r["attendance_clock_out"],
+                _t,
+                _r["at_work_second"] or 0,
+                _ss(_r["minimum_hour"]) if _r.get("minimum_hour") else 0,
+            )
+            if _why:
+                half_leave_info[_d] = (
+                    _p[3],
+                    "paid" if _p[0] >= _p[1] else "unpaid",
+                    f"{half_leave_label(_p[2], _t)}. {_why}",
+                )
 
         # Holiday date → name
         holiday_info = {}
@@ -1883,8 +2083,10 @@ def attendance_monthly_summary_detail(request):
             else:
                 day_type = "full"
 
-            if att_date in leave_date_info:
-                lt_name, lt_payment = leave_date_info[att_date]
+            if att_date in leave_date_info or att_date in half_leave_info:
+                lt_name, lt_payment = (
+                    leave_date_info.get(att_date) or half_leave_info[att_date]
+                )[:2]
                 conflict_type = "paid_leave" if lt_payment == "paid" else "unpaid_leave"
                 conflict_label = lt_name
             elif att_date in holiday_info:
@@ -1908,6 +2110,12 @@ def attendance_monthly_summary_detail(request):
                     "worked_m": _wm,
                     "conflict_type": conflict_type,
                     "conflict_label": conflict_label,
+                    "reason": (
+                        half_leave_info[att_date][2]
+                        if att_date in half_leave_info
+                        and att_date not in leave_date_info
+                        else ""
+                    ),
                 }
             )
 
@@ -2015,6 +2223,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
             "minimum_hour",
             "overtime_second",
             "attendance_overtime_approve",
+            "shift_id_id",
         )
     }
 
@@ -2052,6 +2261,8 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
     part_day_halves = {}
     # Future days with half-day leave: only the leave half is counted; the other half is upcoming.
     future_part = {}
+    # Why a half-day-leave day is a conflict, shown on the day.
+    clash_reason = {}
 
     # -- Holiday dates --------------------------------------------------------
     holiday_map = {}
@@ -2124,14 +2335,28 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
     _wi_row = _EWI.objects.filter(employee_id=emp).values("shift_id_id").first()
     _cal_shift_pk = _wi_row["shift_id_id"] if _wi_row else None
     cal_shift_secs = {}  # {day_name: seconds}
-    if _cal_shift_pk:
-        for _ss in _ESS.objects.filter(shift_id=_cal_shift_pk).values(
-            "day__day", "minimum_working_hour"
-        ):
-            if _ss["minimum_working_hour"]:
-                cal_shift_secs[_ss["day__day"]] = strtime_seconds(
-                    _ss["minimum_working_hour"]
-                )
+    cal_shift_times = {}  # {(shift, day_name): (start, end)}
+    _cal_shift_ids = {
+        r["shift_id_id"] for r in att_map.values() if r.get("shift_id_id")
+    } | {_cal_shift_pk}
+    for _ss in _ESS.objects.filter(
+        shift_id__in=[i for i in _cal_shift_ids if i]
+    ).values(
+        "shift_id_id", "day__day", "minimum_working_hour", "start_time", "end_time"
+    ):
+        if _ss["shift_id_id"] == _cal_shift_pk and _ss["minimum_working_hour"]:
+            cal_shift_secs[_ss["day__day"]] = strtime_seconds(
+                _ss["minimum_working_hour"]
+            )
+        cal_shift_times[(_ss["shift_id_id"], _ss["day__day"])] = (
+            _ss["start_time"],
+            _ss["end_time"],
+        )
+
+    def _times_for(d):
+        """The shift hours of a day: the shift it was worked on, else the employee's own."""
+        shift = (att_map.get(d) or {}).get("shift_id_id") or _cal_shift_pk
+        return cal_shift_times.get((shift, _CAL_DAY_NAMES[d.weekday()]))
 
     # -- Per-day manual hours from calendar editor ----------------------------
     cal_daily_hours_map = {}  # {date: (hours_second, is_manually_edited)}
@@ -2222,6 +2447,25 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                     _pl, att_status in ("present", "half_present")
                 )
                 part_day_halves[d] = _halves_pl
+                # Attendance inside the half that is on leave is a clash, as on a full-day leave.
+                _why = half_leave_conflict(
+                    _pl[2],
+                    clock_in,
+                    clock_out,
+                    _times_for(d),
+                    worked,
+                    min_secs,
+                )
+                if _why:
+                    clash_reason[d] = (
+                        f"{half_leave_label(_pl[2], _times_for(d))}. {_why}"
+                    )
+                    if resolution == "attendance":
+                        return att_status, detail, None, "resolved_attendance", False
+                    if resolution == "leave":
+                        return ("split", detail, None, "resolved_leave", False)
+                    _ctype = "paid_leave" if _pl[0] >= _pl[1] else "unpaid_leave"
+                    return att_status, detail, _ctype, None, True
                 return ("split", detail, None, None, False)
 
             if raw_conflict in ("holiday_ot", "week_off_ot"):
@@ -2401,6 +2645,7 @@ def _build_calendar_context(emp, from_date, to_date, show_future_leave=False):
                                 "resolution": resolution_badge,
                                 "is_conflict": is_conflict,
                                 "future_part": future_part.get(d),
+                                "conflict_reason": clash_reason.get(d, ""),
                                 "hours_second": _cell_sec,
                                 "hours_label": _hlabel,
                                 "show_hours": _show_hours,
@@ -2639,6 +2884,7 @@ def attendance_monthly_summary_conflict_resolve(request):
             "minimum_hour",
             "overtime_second",
             "attendance_overtime_approve",
+            "shift_id_id",
         )
         .first()
     )
@@ -2715,6 +2961,54 @@ def attendance_monthly_summary_conflict_resolve(request):
             conflict_type = "paid_leave" if _paid else "unpaid_leave"
             conflict_label = _lr.leave_type_id.name
             break
+    clash_why = ""
+    clash_label = ""
+    clash_shift = ""
+    if not conflict_type and part_leave_day and att_row:
+        # Half-day leave: a clash only when the attendance reaches into the half on leave.
+        from employee.models import EmployeeWorkInformation as _EWI_p
+
+        _wi = _EWI_p.objects.filter(employee_id=emp).values("shift_id_id").first()
+        _times = None
+        # The shift the day was worked on; the employee's own when it was not recorded.
+        _shift_pk = att_row.get("shift_id_id") or (_wi["shift_id_id"] if _wi else None)
+        if _shift_pk:
+            from base.models import EmployeeShiftSchedule as _ESS_p
+
+            _row = (
+                _ESS_p.objects.filter(
+                    shift_id=_shift_pk,
+                    day__day=[
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                        "saturday",
+                        "sunday",
+                    ][date.weekday()],
+                )
+                .values("start_time", "end_time")
+                .first()
+            )
+            _times = (_row["start_time"], _row["end_time"]) if _row else None
+        clash_why = half_leave_conflict(
+            part_leave_day[2],
+            clock_in,
+            clock_out,
+            _times,
+            att_row["at_work_second"] or 0,
+            _shift_min_secs,
+        )
+        if clash_why:
+            clash_label = half_leave_label(part_leave_day[2], _times)
+            clash_shift = shift_hours_text(_times)
+            conflict_type = (
+                "paid_leave"
+                if part_leave_day[0] >= part_leave_day[1]
+                else "unpaid_leave"
+            )
+            conflict_label = part_leave_day[3]
     if not conflict_type:
         _h = Holidays.objects.filter(start_date__lte=date, end_date__gte=date).first()
         if _h:
@@ -3050,6 +3344,14 @@ def attendance_monthly_summary_conflict_resolve(request):
         "clock_out": clock_out,
         "conflict_type": conflict_type,
         "conflict_label": conflict_label,
+        "clash_reason": clash_why,
+        "clash_label": clash_label,
+        "clash_shift": clash_shift,
+        "clash_worked": (
+            f"{clock_in:%H:%M}" + (f" \u2013 {clock_out:%H:%M}" if clock_out else "")
+            if clash_why and clock_in
+            else ""
+        ),
         "existing_resolution": existing.resolution if existing else None,
         # A day cut in two: what each half is now, for the selects, and its name for the history.
         "split_a": initial_halves[0],
