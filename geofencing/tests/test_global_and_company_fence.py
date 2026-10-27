@@ -277,3 +277,78 @@ class SetupPageTests(TestCase):
         own.refresh_from_db()
         self.assertEqual(own.radius_in_meters, 300)
         self.assertEqual(GeoFencing.objects.count(), 1)
+
+
+@patch("geofencing.models.Nominatim")
+class WebPunchWithAllCompaniesTests(TestCase):
+    """
+    With "all companies" selected the clock-in view has no company of its own. It used to skip
+    the geofence check completely, so an employee outside the fence could punch in.
+    """
+
+    def setUp(self):
+        from attendance.models import AttendanceGeneralSetting
+
+        self.acme = make_company("Acme")
+        # only a user who can see several companies is offered "all companies"; for anyone else the
+        # middleware puts their own company back in the session
+        self.user = make_user("fence-punch-user", is_superuser=True)
+        make_employee(
+            company=self.acme, email="fence-punch@test.horilla", user=self.user
+        )
+        self.user = type(self.user).objects.get(pk=self.user.pk)
+        # the setting the view reads when "all companies" is selected
+        AttendanceGeneralSetting.objects.create(company_id=None, enable_check_in=True)
+        self.client.force_login(self.user)
+
+    def punch(self, latitude, longitude):
+        from django.contrib.messages import get_messages
+
+        session = self.client.session
+        session["selected_company"] = "all"
+        session.save()
+        response = self.client.get(
+            reverse("clock-in"),
+            {"latitude": latitude, "longitude": longitude},
+            HTTP_HX_REQUEST="true",
+        )
+        return [str(message) for message in get_messages(response.wsgi_request)]
+
+    def test_a_punch_from_outside_the_fence_is_refused_with_all_selected(
+        self, nominatim
+    ):
+        from attendance.models import AttendanceActivity
+
+        nominatim.return_value.reverse.return_value = MagicMock()
+        make_fence(None, radius_in_meters=100)
+        messages = self.punch("40.0", "-74.0")
+        self.assertTrue(
+            any("outside the permitted work location" in m for m in messages), messages
+        )
+        self.assertEqual(AttendanceActivity.objects.count(), 0)
+
+    def test_a_punch_without_a_location_is_refused_with_all_selected(self, nominatim):
+        nominatim.return_value.reverse.return_value = MagicMock()
+        make_fence(None, radius_in_meters=100)
+        messages = self.punch("", "")
+        self.assertTrue(any("Could not verify your location" in m for m in messages))
+
+    def test_a_punch_inside_the_fence_is_not_stopped_by_it(self, nominatim):
+        nominatim.return_value.reverse.return_value = MagicMock()
+        make_fence(None, radius_in_meters=100)
+        messages = self.punch("12.97", "77.59")
+        self.assertFalse(
+            any("permitted work location" in m for m in messages), messages
+        )
+        self.assertFalse(any("verify your location" in m for m in messages), messages)
+
+    def test_the_helper_uses_the_employees_company_when_the_view_has_none(
+        self, nominatim
+    ):
+        from attendance.methods.utils import geofence_denial_web
+
+        nominatim.return_value.reverse.return_value = MagicMock()
+        make_fence(None, radius_in_meters=100)
+        request = RequestFactory().get("/", {"latitude": "40.0", "longitude": "-74.0"})
+        request.user = self.user
+        self.assertIsNotNone(geofence_denial_web(request, None))

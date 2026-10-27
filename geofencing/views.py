@@ -157,15 +157,6 @@ def get_company(request):
         raise serializers.ValidationError(e)
 
 
-def get_company_location(request):
-    company = get_company(request)
-    try:
-        location = GeoFencing.objects.get(company_id=company)
-        return location
-    except Exception as e:
-        raise serializers.ValidationError(e)
-
-
 @login_required
 @permission_required("geofencing.add_localbackup")
 def geo_location_config(request):
