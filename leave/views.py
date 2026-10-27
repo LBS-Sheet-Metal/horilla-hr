@@ -2658,10 +2658,15 @@ def assigned_leaves_export(request):
 @login_required
 @hx_request_required
 def get_job_positions(request):
-    department_id = request.GET.get("department")
+    department_ids = [d for d in request.GET.getlist("department") if d]
     form = RestrictLeaveForm()
-    form.fields["job_position"].queryset = JobPosition.objects.filter(
-        department_id=department_id
+    queryset = JobPosition.objects.exclude(department_id__in=department_ids)
+    form.fields["job_position"].queryset = queryset
+    # Keep earlier picks that are still allowed; drop those belonging to
+    # the newly chosen departments.
+    selected = [p for p in request.GET.getlist("job_position") if p]
+    form.initial["job_position"] = list(
+        queryset.filter(pk__in=selected).values_list("pk", flat=True)
     )
 
     return render(request, "leave/job_position_field.html", {"form": form})

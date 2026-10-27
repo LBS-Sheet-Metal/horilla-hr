@@ -17,7 +17,7 @@ from django.utils.translation import gettext_lazy as _
 
 from base.forms import ModelForm as BaseModelForm
 from base.methods import filtersubordinatesemployeemodel, reload_queryset
-from base.models import CompanyLeaves, Holidays
+from base.models import CompanyLeaves, Holidays, JobPosition
 from employee.filters import EmployeeFilter
 from employee.forms import MultipleFileField
 from employee.models import Employee
@@ -1180,6 +1180,19 @@ class RestrictLeaveForm(BaseModelForm):
         )
         self.fields["end_date"].widget = forms.DateInput(
             attrs={"type": "date", "class": "oh-input w-100"}
+        )
+        # Job positions of the chosen departments are excluded; with no
+        # department chosen, every job position is offered.
+        if self.data:
+            department_ids = [
+                d for d in self.data.getlist(self.add_prefix("department")) if d
+            ]
+        elif self.instance.pk:
+            department_ids = list(self.instance.department.values_list("pk", flat=True))
+        else:
+            department_ids = []
+        self.fields["job_position"].queryset = JobPosition.objects.exclude(
+            department_id__in=department_ids
         )
         self.fields["department"].widget.attrs.update(
             {
