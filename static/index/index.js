@@ -349,25 +349,6 @@ function togglePublicComments() {
     }
 }
 
-function attendanceDateChange(selectElement) {
-    var selectedDate = selectElement.val();
-    let parentForm = selectElement.parents().closest("form");
-    var shiftId = parentForm.find("[name=shift_id]").val();
-
-    $.ajax({
-        type: "post",
-        url: "/attendance/update-date-details/",
-        data: {
-            csrfmiddlewaretoken: getCookie("csrftoken"),
-            attendance_date: selectedDate,
-            shift_id: shiftId,
-        },
-        success: function (response) {
-            parentForm.find("[name=minimum_hour]").val(response.minimum_hour);
-        },
-    });
-}
-
 function getAssignedLeave(employeeElement) {
     var employeeId = employeeElement.val();
     $.ajax({
