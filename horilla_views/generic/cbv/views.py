@@ -1497,6 +1497,7 @@ class HorillaDetailedView(DetailView):
     cols: dict = {}
     instance = None
     empty_template = None
+    detail_note_method: str = ""
 
     # Opt-in: pin the title row and the action row, and give the body between
     # them a bounded height instead of letting the whole dialog scroll. Off by
@@ -1587,6 +1588,7 @@ class HorillaDetailedView(DetailView):
         context["action_method"] = self.action_method
         context["cols"] = self.cols
         context["sticky_chrome"] = self.sticky_chrome
+        context["detail_note_method"] = self.detail_note_method
 
         if instance_ids:
             prev_id, next_id = closest_numbers(instance_ids, pk)
