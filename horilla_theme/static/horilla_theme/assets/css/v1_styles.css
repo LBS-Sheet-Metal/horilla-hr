@@ -305,6 +305,10 @@ input[type="file"] {
   height: 35px;
 }
 
+textarea.oh-input {
+  height: auto;
+}
+
 .oh-input::placeholder,
 .oh-select::placeholder {
   font-size: 0.75rem;
