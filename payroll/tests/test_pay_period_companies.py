@@ -197,9 +197,8 @@ class SettingsFormTests(Fixture):
         html = self.client.get(
             reverse("pay-period-settings") + "?modal=1", HTTP_HX_REQUEST="true"
         ).content.decode()
-        # whitespace inside the tag is template formatting, not behaviour: match the attributes, not the spacing
-        self.assertRegex(html, r'<option value="10"\s+selected\s*>')
-        self.assertRegex(html, r'<option value="day:7"\s+selected\s*>')
+        self.assertIn('<option value="10"  selected >', html)
+        self.assertIn('<option value="day:7"  selected >', html)
         self.assertFalse(
             PayPeriodSettings.objects.entire()
             .filter(company_id=self.company_a)
