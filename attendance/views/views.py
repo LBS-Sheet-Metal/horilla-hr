@@ -2631,17 +2631,12 @@ def delete_comment_file(request):
 @login_required
 @manager_can_enter("attendance.view_attendance")
 def work_records(request):
-    today = date.today()
-    previous_data = request.GET.urlencode()
-    employee_filter_form = EmployeeFilter(request.GET)
-    context = {
-        "current_date": today,
-        "pd": previous_data,
-        "f": employee_filter_form,
-    }
-    return render(
-        request, "attendance/work_record/work_record_view.html", context=context
-    )
+    """
+    Deprecated: the Daily Work Status page. The Monthly Summary's Day-wise view shows the same
+    grid (and the last regularisation of each day), so this address now opens that. The page and
+    its template are kept, unlinked, until they are removed.
+    """
+    return redirect(f"{reverse('attendance-monthly-summary')}?view=daily")
 
 
 @login_required
