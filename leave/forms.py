@@ -208,6 +208,40 @@ class LeaveTypeForm(ConditionForm):
         elif payment_type and payment_type != "custom":
             cleaned_data["payment_percentage"] = None
 
+        carryforward_type = cleaned_data.get("carryforward_type")
+        if cleaned_data.get("reset") and carryforward_type == "carryforward expire":
+            method = cleaned_data.get("carryforward_expiry_method")
+            if method == "first_expiry_date":
+                if not cleaned_data.get("carryforward_expire_date"):
+                    self.add_error(
+                        "carryforward_expire_date",
+                        _("First expiry date is required for this expiry method."),
+                    )
+                if not cleaned_data.get("carryforward_expire_in"):
+                    self.add_error(
+                        "carryforward_expire_in",
+                        _("Expiry duration is required to schedule the next expiry."),
+                    )
+            elif method == "assignment_date":
+                if not cleaned_data.get("carryforward_expire_in"):
+                    self.add_error(
+                        "carryforward_expire_in",
+                        _("Expiry duration is required for this expiry method."),
+                    )
+            if (
+                cleaned_data.get("carryforward_expire_in") is not None
+                and cleaned_data["carryforward_expire_in"] <= 0
+            ):
+                self.add_error(
+                    "carryforward_expire_in",
+                    _("Expiry duration must be greater than zero."),
+                )
+            if not cleaned_data.get("carryforward_expire_period"):
+                self.add_error(
+                    "carryforward_expire_period",
+                    _("Expiry period is required."),
+                )
+
         return cleaned_data
 
     def __init__(self, *args, **kwargs):
@@ -280,6 +314,40 @@ class UpdateLeaveTypeForm(ConditionForm):
                 )
         elif payment_type and payment_type != "custom":
             cleaned_data["payment_percentage"] = None
+
+        carryforward_type = cleaned_data.get("carryforward_type")
+        if cleaned_data.get("reset") and carryforward_type == "carryforward expire":
+            method = cleaned_data.get("carryforward_expiry_method")
+            if method == "first_expiry_date":
+                if not cleaned_data.get("carryforward_expire_date"):
+                    self.add_error(
+                        "carryforward_expire_date",
+                        _("First expiry date is required for this expiry method."),
+                    )
+                if not cleaned_data.get("carryforward_expire_in"):
+                    self.add_error(
+                        "carryforward_expire_in",
+                        _("Expiry duration is required to schedule the next expiry."),
+                    )
+            elif method == "assignment_date":
+                if not cleaned_data.get("carryforward_expire_in"):
+                    self.add_error(
+                        "carryforward_expire_in",
+                        _("Expiry duration is required for this expiry method."),
+                    )
+            if (
+                cleaned_data.get("carryforward_expire_in") is not None
+                and cleaned_data["carryforward_expire_in"] <= 0
+            ):
+                self.add_error(
+                    "carryforward_expire_in",
+                    _("Expiry duration must be greater than zero."),
+                )
+            if not cleaned_data.get("carryforward_expire_period"):
+                self.add_error(
+                    "carryforward_expire_period",
+                    _("Expiry period is required."),
+                )
 
         return cleaned_data
 
