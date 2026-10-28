@@ -714,10 +714,19 @@ def ess_announcements(request):
 def ess_birthdays(request):
     """GET /my-dashboard/api/birthdays/ — birthdays of active employees from today to the
     end of the current month (today's first), for the sidebar Birthdays card."""
+    from accessibility.methods import check_is_accessible
     from employee.models import Employee
 
-    if not _get_employee(request):
+    employee = _get_employee(request)
+    if not employee:
         return JsonResponse({"error": "no employee"}, status=403)
+
+    if not check_is_accessible(
+        "birthday_view",
+        f"{request.session.session_key}accessibility_filter",
+        employee,
+    ):
+        return JsonResponse({"birthdays": [], "restricted": True})
 
     today = date.today()
     birthdays = []
